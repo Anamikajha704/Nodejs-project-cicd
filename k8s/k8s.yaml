@@ -6,6 +6,11 @@ metadata:
     app: nodejs-app
 spec:
   replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: nodejs-app
@@ -16,24 +21,32 @@ spec:
     spec:
       containers:
       - name: nodejs-container
-        # 🚀 GENERIC PLACEHOLDER: The GitHub Actions script will dynamically overwrite this line!
-        image: nodejs-app:latest 
+        image: nodejs-app:latest # GitHub Actions will replace this exact string
         ports:
         - containerPort: 3000
+        
+       
+        resources:
+          requests:
+            cpu: "100m"      
+            memory: "128Mi" 
+          limits:
+            cpu: "200m"      
+            memory: "256Mi"  
         
         livenessProbe:
           httpGet:
             path: /health
             port: 3000
-          initialDelaySeconds: 5   
+          initialDelaySeconds: 10 # Gives Node extra time to boot safely before testing crashes  
           periodSeconds: 10        
           
         readinessProbe:
           httpGet:
             path: /health
             port: 3000
-          initialDelaySeconds: 5   
-          periodSeconds: 10
+          initialDelaySeconds: 3  # fast check so new containers route traffic quickly
+          periodSeconds: 5        
 
 ---
 
@@ -42,8 +55,8 @@ kind: Service
 metadata:
   name: nodejs-app-service
   annotations:
-    service.beta.kubernetes.io/aws-load-balancer-type: "external"
-    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "instance"
+  
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
 spec:
   type: LoadBalancer 
   selector:
@@ -51,4 +64,4 @@ spec:
   ports:
     - protocol: TCP
       port: 80         
-      targetPort: 3000 
+      targetPort: 3000

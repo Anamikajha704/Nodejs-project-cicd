@@ -3,59 +3,61 @@ name: CI/CD Pipeline to AWS EKS
 on:
   push:
     branches:
-      - main # Triggers the pipeline when you push to the main branch
+      - main
 
 env:
   AWS_REGION: us-east-1
-  ECR_REPOSITORY: nodejs-image          # Generic name for the public repo
-  EKS_CLUSTER_NAME: nodejs-eks-cluster  # Generic name for the public repo
+  ECR_REPOSITORY: nodejs-image          
+  EKS_CLUSTER_NAME: nodejs-eks-cluster  
+  # paste arn string of the role created in AWS IAM for GitHub Actions to assume
+  AWS_ROLE_ARN: arn:aws:iam::123456789012:role/nodejs-eks-cluster-github-actions-role
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    
+    #Gives the runner permission to securely request an AWS OIDC identity token
+    permissions:
+      id-token: write
+      contents: read
+
     steps:
     
-    # 1. Check out the repository code
+    # Check out the repository code
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    # 2. Configure AWS Credentials
-    - name: Configure AWS Credentials
+   #AWS Credentials Configuration OIDC
+    - name: Configure AWS Credentials via OIDC
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        role-to-assume: ${{ env.AWS_ROLE_ARN }}
         aws-region: ${{ env.AWS_REGION }}
 
-    # 3. Log in to Amazon ECR
+    # Log in to Amazon ECR
     - name: Login to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
 
-    # 4. Build, Tag, and Push Docker Image to ECR
+    # Build, Tag, and Push Docker Image to ECR
     - name: Build and Push Docker Image
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG: ${{ github.sha }} # Uses the unique git commit hash as the tag
+        IMAGE_TAG: ${{ github.sha }} 
       run: |
-        # Builds the image using the files inside the app folder
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./app
         docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-        # Saves the full image URL into the pipeline memory environment
-        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
+        echo "IMAGE_URL=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
 
-    # 5. Connect to AWS EKS
+    # Connect to AWS EKS
     - name: Update Kubeconfig for EKS
       run: |
         aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
 
-    # 6. Deploy to Kubernetes
+    # Deploy to Kubernetes
     - name: Deploy to EKS
       run: |
-        # Dynamically updates the placeholder text inside your manifest file
-        sed -i "s|[\t ]*image:.*|        image: ${{ env.image }}|g" k8s/k8s.yaml
-        
-        # Applies the updated manifest to your EKS cluster
+        sed -i "s|image: nodejs-app:latest|image: ${{ env.IMAGE_URL }}|g" k8s/k8s.yaml
         kubectl apply -f k8s/k8s.yaml
